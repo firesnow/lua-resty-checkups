@@ -92,7 +92,7 @@ function _M.prepare_checker(config)
                     local phase = get_phase()
                     -- if in init_worker phase, only worker 0 can update shm
                     if phase == "init" or
-                        phase == "init_worker" and worker_id() == 0 then
+                        phase == "init_worker" or phase == "timer" and worker_id() == 0 then
                         local key = dyconfig._gen_shd_key(skey)
                         shd_config:set(key, cjson.encode(base.upstream.checkups[skey].cluster))
                     end
@@ -109,7 +109,7 @@ function _M.prepare_checker(config)
         shd_config and worker_id then
         local phase = get_phase()
         -- if in init_worker phase, only worker 0 can update shm
-        if phase == "init" or phase == "init_worker" and worker_id() == 0 then
+        if phase == "init" or phase == "init_worker" or phase == "timer" and worker_id() == 0 then
             shd_config:set(base.SHD_CONFIG_VERSION_KEY, 0)
             shd_config:set(base.SKEYS_KEY, cjson.encode(skeys))
         end
