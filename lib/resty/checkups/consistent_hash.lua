@@ -7,8 +7,9 @@ local tab_insert = table.insert
 
 local _M = { _VERSION = "0.11" }
 
-local MOD      = 2 ^ 32
-local REPLICAS = 20
+local MOD       = 2 ^ 32
+local REPLICAS  = 20
+local LUCKY_NUM = 13
 
 
 local function hash_string(str)
@@ -33,7 +34,7 @@ local function init_consistent_hash_state(servers)
         local base_hash = hash_string(key)
         for c = 1, REPLICAS * weight_sum do
             -- TODO: more balance hash
-            local hash = (base_hash * c) % MOD
+            local hash = (base_hash * c * LUCKY_NUM) % MOD
             tab_insert(circle, { hash, index })
         end
         members = members + 1
@@ -77,9 +78,10 @@ function _M.next_consistent_hash_server(servers, peer_cb, hash_key)
 
     local circle = chash.circle
     local st = binary_search(circle, hash_string(hash_key))
-    local ed = #circle
+    local size = #circle
+    local ed = st + size - 1
     for i = st, ed do  -- TODO: algorithm O(n)
-        local idx = circle[i][2]
+        local idx = circle[(i - 1) % size + 1][2]
         if peer_cb(idx, servers[idx]) then
             return servers[idx]
         end

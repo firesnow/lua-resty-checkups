@@ -2,7 +2,6 @@
 
 local cjson         = require "cjson.safe"
 
-local lock          = require "resty.lock"
 local base          = require "resty.checkups.base"
 
 local str_sub       = string.sub
@@ -339,7 +338,7 @@ local function cluster_heartbeat(skey)
         ups_protected = false
     end
 
-    ups.timeout = ups.timeout or 60
+    ups.timeout = ups.timeout or 5
 
     local server_count = 0
     for level, cls in pairs(ups.cluster) do

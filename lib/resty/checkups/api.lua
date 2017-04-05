@@ -2,8 +2,6 @@
 
 local cjson      = require "cjson.safe"
 
-local consistent_hash = require "resty.checkups.consistent_hash"
-local round_robin     = require "resty.checkups.round_robin"
 local heartbeat       = require "resty.checkups.heartbeat"
 local dyconfig        = require "resty.checkups.dyconfig"
 local base            = require "resty.checkups.base"
@@ -92,7 +90,7 @@ function _M.prepare_checker(config)
                     local phase = get_phase()
                     -- if in init_worker phase, only worker 0 can update shm
                     if phase == "init" or
-                        phase == "init_worker" or phase == "timer" and worker_id() == 0 then
+                        phase == "init_worker" and worker_id() == 0 then
                         local key = dyconfig._gen_shd_key(skey)
                         shd_config:set(key, cjson.encode(base.upstream.checkups[skey].cluster))
                     end
@@ -109,7 +107,7 @@ function _M.prepare_checker(config)
         shd_config and worker_id then
         local phase = get_phase()
         -- if in init_worker phase, only worker 0 can update shm
-        if phase == "init" or phase == "init_worker" or phase == "timer" and worker_id() == 0 then
+        if phase == "init" or phase == "init_worker" and worker_id() == 0 then
             shd_config:set(base.SHD_CONFIG_VERSION_KEY, 0)
             shd_config:set(base.SKEYS_KEY, cjson.encode(skeys))
         end
@@ -133,6 +131,8 @@ function _M.get_status()
     all_status.conf_hash = base.upstream.conf_hash or cjson.null
     all_status.shd_config_version = base.upstream.shd_config_version or cjson.null
 
+    all_status.config_timer = dyconfig.get_timer_key_status()
+
     return all_status
 end
 
@@ -153,6 +153,11 @@ end
 
 
 function _M.create_checker()
+    local phase = get_phase()
+    if phase ~= "init_worker" then
+        error("create_checker must be called in init_worker phase")
+    end
+
     if not base.upstream.initialized then
         log(ERR, "create checker failed, call prepare_checker in init_by_lua")
         return
@@ -172,50 +177,26 @@ function _M.create_checker()
         base.ups_status_timer_created = true
     end
 
-    local ckey = base.CHECKUP_TIMER_KEY
-    local val, err = mutex:get(ckey)
-    if val then
+    if not worker_id then
+        log(ERR, "ngx_http_lua_module version too low, no heartbeat timer will be created")
+        return
+    elseif worker_id() ~= 0 then
         return
     end
 
-    if err then
-        log(WARN, "failed to get key from shm: ", err)
-        return
-    end
-
-    -- Pass timeout=0 to lock:new, so the lock method can return immediately
-    -- without waiting if it cannot acquire the lock right away.
-    -- By doing this, we can use lock:lock() in init_worker phase
-    -- because no ngx.sleep call is made, which is disabled in the context.
-    local lock_timeout = get_phase() == "init_worker" and 0 or nil
-
-    local lock = base.get_lock(ckey, lock_timeout)
-    if not lock then
-        log(WARN, "failed to acquire the lock: ", err)
-        return
-    end
-
-    val, err = mutex:get(ckey)
-    if val then
-        base.release_lock(lock)
-        return
-    end
-
-    -- create active checkup timer
+    -- only worker 0 will create heartbeat timer
     local ok, err = ngx.timer.at(0, heartbeat.active_checkup)
     if not ok then
         log(WARN, "failed to create timer: ", err)
-        base.release_lock(lock)
         return
     end
 
+    local ckey = base.CHECKUP_TIMER_KEY
     local overtime = base.upstream.checkup_timer_overtime
     local ok, err = mutex:set(ckey, 1, overtime)
     if not ok then
         log(WARN, "failed to update shm: ", err)
     end
-
-    base.release_lock(lock)
 end
 
 
